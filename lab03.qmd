@@ -1,0 +1,167 @@
+---
+title: "lab03"
+author: "Otavio Ribero Mello"
+format: html
+editor: visual
+---
+
+```{r}
+#| label: setup
+#| message: false
+library(tidyverse)
+library(leaflet)
+```
+
+1.Importe, utilizando o pacote readr, cada um dos três arquivos disponíveis. Os objetos resultantes devem ser chamados flights, airlines e airports. 
+Para o arquivo de aeroportos, importe apenas as colunas IATA_CODE, CITY, STATE, LATITUDE, LONGITUDE;
+Para o arquivo de vôos:
+a.Importe apenas as colunas DESTINATION_AIRPORT e ARRIVAL_DELAY;
+
+```{r}
+#| label: importa-airports-airlines
+
+airports <- read_csv(
+  "airports.csv",
+  col_types = cols_only(
+    IATA_CODE = col_character(),
+    CITY      = col_character(),
+    STATE     = col_character(),
+    LATITUDE  = col_double(),
+    LONGITUDE = col_double()
+  )
+)
+
+airlines <- read_csv("airlines.csv")
+
+glimpse(airports)
+glimpse(airlines)
+```
+
+
+b.Leia apenas 1 milhão de linhas por vez;
+c.Remova vôos em que o aeroporto de destino comece com a letra 1;
+d.Remova registros em que existam pelo menos uma coluna faltante;
+e.Determine, para cada parte do arquivo, as estatísticas suficientes para a determinação do atraso médio por aeroporto de destino;
+
+```{r}
+#| label: le-flights-em-blocos
+
+processa_bloco <- function(bloco, pos) {
+  bloco |>
+    filter(substr(DESTINATION_AIRPORT, 1, 1) != "1") |>
+    drop_na() |>
+    group_by(DESTINATION_AIRPORT) |>
+    summarise(
+      soma_atraso = sum(ARRIVAL_DELAY),
+      n_voos      = n(),
+      .groups = "drop"
+    )
+}
+
+estatisticas_por_bloco <- read_csv_chunked(
+  "flights.csv",
+  callback = DataFrameCallback$new(processa_bloco),
+  chunk_size = 1e6,
+  col_types = cols_only(
+    DESTINATION_AIRPORT = col_character(),
+    ARRIVAL_DELAY        = col_double()
+  )
+)
+```
+
+f.Ao finalizar a leitura do arquivo, combine as estatísticas suficientes de modo a produzir a média de atraso por aeroporto.
+
+```{r}
+#| label: combina-estatisticas
+
+flights <- estatisticas_por_bloco |>
+  group_by(DESTINATION_AIRPORT) |>
+  summarise(
+    atraso_total = sum(soma_atraso),
+    total_voos   = sum(n_voos),
+    atraso_medio = atraso_total / total_voos,
+    .groups = "drop"
+  )
+
+flights
+```
+
+2. Selecione a operação apropriada join para incluir, na tabela flights, as colunas CITY e STATE do objeto airports. Para executar esta tarefa:
+
+a. Identifique a coluna que é a chave na tabela flights;
+
+A chave (coluna identificadora) em `flights` é `DESTINATION_AIRPORT`.
+
+b.Identifique a coluna que é a chave na tabela airports;
+
+A chave em `airports` é `IATA_CODE`.
+
+c.Quais são os aeroportos que estão listados em flights, mas estão ausentes em airports?
+
+
+```{r}
+#| label: aeroportos-ausentes
+
+aeroportos_ausentes <- anti_join(
+  flights, airports,
+  by = c("DESTINATION_AIRPORT" = "IATA_CODE")
+)
+
+aeroportos_ausentes
+```
+
+d. Apresente o comando que combine ambas as tabelas, indicando explicitamente as chaves;
+
+```{r}
+#| label: join-flights-airports
+
+flights <- left_join(
+  flights, airports,
+  by = c("DESTINATION_AIRPORT" = "IATA_CODE")
+)
+
+flights
+```
+
+e. O resultado já foi armazenado de volta no objeto `flights` (`CITY`, `STATE`, `LATITUDE` e `LONGITUDE` foram incorporadas).
+
+3.Quantos aeroportos cada estado possui? Apresente uma tabela ordenada de forma decrescente (no número de aeroportos).
+
+```{r}
+#| label: aeroportos-por-estado
+
+aeroportos_por_estado <- airports |>
+  count(STATE, name = "n_aeroportos") |>
+  arrange(desc(n_aeroportos))
+
+knitr::kable(aeroportos_por_estado)
+```
+
+4.Apresente um mapa representando todos os atrasos observados por aeroporto.
+a.Carregue o pacote leaflet;
+b.Combine os comandos leaflet, addTiles e addMarkers para a criação de um mapa básico;
+c.Armazene o grafico em b) numa variável chamada this;
+
+```{r}
+#| label: mapa-atrasos
+
+this <- leaflet(data = flights |> drop_na(LATITUDE, LONGITUDE)) |>
+  addTiles() |>
+  addMarkers(
+    lng = ~LONGITUDE,
+    lat = ~LATITUDE,
+    popup = ~paste0(
+      DESTINATION_AIRPORT, " — ", CITY, "/", STATE,
+      "<br>Atraso médio: ", round(atraso_medio, 1), " min",
+      "<br>Voos: ", total_voos
+    )
+  )
+
+this
+```
+
+```{r}
+Sys.setenv(TZ = "America/Sao_Paulo")
+Sys.time()
+```
+
